@@ -5,8 +5,7 @@ A clean, local web-based dashboard for monitoring and controlling **Miners** (an
 Built as a self-hosted alternative to mobile apps like HashWatcher, optimized for Linux/Umbrel users.
 
 <p align="center">
-  <img src="assets/screen.jpg" width="700" alt="CKPool-DigiByte Stack">
-</p>
+  <img src="asset/screen.jpg" width="700" alt="Miner-Dashboard">
 
 ## Features
 

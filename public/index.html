@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hash-Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js"></script>
+  <style>
+    body { font-family: system-ui, sans-serif; }
+    .card { transition: all 0.3s ease; }
+    .card:hover { transform: translateY(-4px); }
+  </style>
+</head>
+<body class="bg-zinc-950 text-white min-h-screen">
+  <div class="max-w-7xl mx-auto p-6">
+    <div class="flex justify-between items-center mb-6">
+      <h1 class="text-4xl font-bold flex items-center gap-3">🍿 Hash-Dashboard <span class="text-yellow-400">• Linux</span></h1>
+      <button onclick="showAddModal()" class="px-6 py-3 bg-yellow-400 hover:bg-yellow-300 text-black font-semibold rounded-2xl">+ Add Miner</button>
+    </div>
+
+    <div class="flex border-b border-zinc-700 mb-8">
+      <button onclick="switchTab(0)" id="tab-monitor" class="tab-button active px-10 py-4 font-semibold text-lg">MONITOR</button>
+      <button onclick="switchTab(1)" id="tab-control" class="tab-button px-10 py-4 font-semibold text-lg text-zinc-400">CONTROL</button>
+    </div>
+
+    <!-- MONITOR TAB -->
+    <div id="monitor-tab">
+      <div id="fleet" class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-10"></div>
+      <div id="grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"></div>
+    </div>
+
+    <!-- CONTROL TAB -->
+    <div id="control-tab" class="hidden">
+      <div id="control-grid" class="grid grid-cols-1 md:grid-cols-2 gap-6"></div>
+    </div>
+  </div>
+
+  <!-- Donation Banner -->
+  <div class="fixed bottom-4 left-1/2 -translate-x-1/2 bg-zinc-900 border border-yellow-400/30 text-yellow-400 text-sm px-6 py-3 rounded-2xl flex items-center gap-3 shadow-2xl">
+    <span>❤️ Support this project:</span>
+    <span class="font-mono bg-zinc-800 px-3 py-1 rounded-xl text-xs">bc1qntqv9n253pyt0sr4pr7qr7p8vv26n40nav3wa2</span>
+  </div>
+
+  <!-- Add Miner Modal -->
+  <div id="modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50">
+    <div class="bg-zinc-900 rounded-3xl p-8 w-full max-w-md">
+      <h2 class="text-2xl font-semibold mb-6">Add New Miner</h2>
+      <input id="name" placeholder="Miner Name" class="w-full bg-zinc-800 rounded-2xl px-5 py-4 mb-4">
+      <input id="ip" placeholder="IP Address" class="w-full bg-zinc-800 rounded-2xl px-5 py-4 mb-6">
+      <div class="flex gap-4">
+        <button onclick="hideModal()" class="flex-1 py-4 text-zinc-400">Cancel</button>
+        <button onclick="addMiner()" class="flex-1 py-4 bg-yellow-400 text-black font-semibold rounded-2xl">Add Miner</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const socket = io();
+    let currentMiners = [];
+    let charts = {};
+    let currentTab = 0;
+
+    function triggerPopcorn() {
+      confetti({ particleCount: 60, spread: 70, origin: { y: 0.6 } });
+    }
+
+    function renderFleet(stats) {
+      let totalH = 0, totalP = 0, online = 0;
+      Object.values(stats).forEach(s => {
+        if (s.online) {
+          totalH += s.hashrate || 0;
+          totalP += s.power || 0;
+          online++;
+        }
+      });
+      const eff = totalP && totalH ? (totalP / totalH).toFixed(2) : '—';
+
+      document.getElementById('fleet').innerHTML = `
+        <div class="bg-zinc-900 rounded-3xl p-6">
+          <div class="text-yellow-400 text-sm">TOTAL HASHRATE</div>
+          <div class="text-5xl font-semibold mt-1">${totalH.toFixed(1)} <span class="text-3xl">GH/s</span></div>
+        </div>
+        <div class="bg-zinc-900 rounded-3xl p-6">
+          <div class="text-emerald-400 text-sm">ONLINE</div>
+          <div class="text-5xl font-semibold mt-1">${online} / ${Object.keys(stats).length || 0}</div>
+        </div>
+        <div class="bg-zinc-900 rounded-3xl p-6">
+          <div class="text-amber-400 text-sm">TOTAL POWER</div>
+          <div class="text-5xl font-semibold mt-1">${Math.round(totalP)} <span class="text-3xl">W</span></div>
+        </div>
+        <div class="bg-zinc-900 rounded-3xl p-6">
+          <div class="text-sky-400 text-sm">AVG EFFICIENCY</div>
+          <div class="text-5xl font-semibold mt-1">${eff} <span class="text-3xl">W/TH</span></div>
+        </div>
+      `;
+    }
+
+    function renderGrid(miners, stats) {
+      const grid = document.getElementById('grid');
+      grid.innerHTML = miners.map(m => {
+        const s = stats[m.id] || { online: false };
+        const chartId = `chart-${m.id}`;
+
+        setTimeout(() => {
+          if (!charts[m.id] && s.hashrate) {
+            const ctx = document.getElementById(chartId);
+            if (ctx) {
+              charts[m.id] = new Chart(ctx, {
+                type: 'line',
+                data: { labels: ['', ''], datasets: [{ data: [s.hashrate * 0.95, s.hashrate], borderColor: '#facc15', tension: 0.4, borderWidth: 3, pointRadius: 0 }] },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { display: false }, y: { display: false } } }
+              });
+            }
+          }
+        }, 200);
+
+        return `
+          <div class="card bg-zinc-900 rounded-3xl p-6">
+            <div class="flex justify-between items-start">
+              <div>
+                <div class="font-semibold text-xl">${m.name}</div>
+                <div class="text-zinc-400 text-sm">${m.ip}</div>
+              </div>
+              <span onclick="deleteMiner('${m.id}')" class="text-red-400 hover:text-red-300 cursor-pointer text-3xl">×</span>
+            </div>
+            <div class="mt-8 text-6xl font-semibold">${s.online ? s.hashrate.toFixed(1) : '—'} <span class="text-2xl text-zinc-400">GH/s</span></div>
+            <div class="grid grid-cols-3 gap-4 mt-10 text-sm">
+              <div>Temp<br><span class="font-medium">${s.online ? s.temp + '°C' : '—'}</span></div>
+              <div>VR<br><span class="font-medium">${s.online ? s.vrTemp + '°C' : '—'}</span></div>
+              <div>Power<br><span class="font-medium">${s.online ? Math.round(s.power) + 'W' : '—'}</span></div>
+            </div>
+            <div class="mt-8 h-20"><canvas id="${chartId}" class="w-full h-full"></canvas></div>
+            <div class="mt-6 flex items-center gap-2 text-xs">
+              <div class="flex items-center gap-2">
+                <div class="w-3 h-3 rounded-full ${s.online ? 'bg-emerald-400 animate-pulse' : 'bg-red-400'}"></div>
+                <span class="${s.online ? 'text-emerald-400' : 'text-red-400'}">${s.online ? 'ONLINE' : 'OFFLINE'}</span>
+              </div>
+              <div class="ml-auto text-zinc-400">${s.efficiency} W/TH</div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function renderControl() {
+      const grid = document.getElementById('control-grid');
+      grid.innerHTML = currentMiners.map(m => `
+        <div class="bg-zinc-900 rounded-3xl p-6">
+          <div class="font-semibold text-xl mb-1">${m.name}</div>
+          <div class="text-zinc-400 mb-6">${m.ip}</div>
+          <div class="space-y-3">
+            <button onclick="sendControl('${m.id}', 'restart')" class="w-full py-4 bg-red-600 hover:bg-red-700 rounded-2xl font-medium">Restart Miner</button>
+            <button onclick="sendControl('${m.id}', 'turbo')" class="w-full py-4 bg-yellow-400 hover:bg-yellow-300 text-black rounded-2xl font-medium">Turbo Overclock</button>
+            <button onclick="sendControl('${m.id}', 'eco')" class="w-full py-4 bg-zinc-700 hover:bg-zinc-600 rounded-2xl font-medium">Eco Mode</button>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    async function sendControl(id, action) {
+      try {
+        const res = await fetch(`/api/control/${id}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action })
+        });
+        const data = await res.json();
+        if (data.success) {
+          alert(`✅ ${action} command sent successfully!`);
+        } else {
+          alert('Command failed');
+        }
+      } catch (e) {
+        alert('Failed to send command');
+      }
+    }
+
+    function switchTab(tab) {
+      currentTab = tab;
+      document.getElementById('monitor-tab').classList.toggle('hidden', tab !== 0);
+      document.getElementById('control-tab').classList.toggle('hidden', tab !== 1);
+      document.getElementById('tab-monitor').classList.toggle('active', tab === 0);
+      document.getElementById('tab-control').classList.toggle('active', tab === 1);
+      if (tab === 1) renderControl();
+    }
+
+    async function addMiner() {
+      const name = document.getElementById('name').value.trim();
+      const ip = document.getElementById('ip').value.trim();
+      if (!name || !ip) return alert('Name and IP required');
+
+      await fetch('/api/miners', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, ip })
+      });
+      hideModal();
+      document.getElementById('name').value = '';
+      document.getElementById('ip').value = '';
+    }
+
+    async function deleteMiner(id) {
+      if (confirm('Remove this miner?')) {
+        await fetch(`/api/miners/${id}`, { method: 'DELETE' });
+      }
+    }
+
+    function showAddModal() { document.getElementById('modal').classList.remove('hidden'); }
+    function hideModal() { document.getElementById('modal').classList.add('hidden'); }
+
+    socket.on('update', ({ miners, stats }) => {
+      currentMiners = miners;
+      if (currentTab === 0) {
+        renderFleet(stats);
+        renderGrid(miners, stats);
+      }
+    });
+
+    window.onload = () => {
+      triggerPopcorn();
+      switchTab(0);
+    };
+  </script>
+</body>
+</html>

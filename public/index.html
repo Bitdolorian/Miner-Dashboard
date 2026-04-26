@@ -6,17 +6,21 @@
   <title>Hash-Dashboard</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js"></script>
   <style>
     body { font-family: system-ui, sans-serif; }
-    .card { transition: all 0.3s ease; }
-    .card:hover { transform: translateY(-4px); }
+    .card {
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .card:hover {
+      transform: translateY(-8px);
+      box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+    }
   </style>
 </head>
 <body class="bg-zinc-950 text-white min-h-screen">
   <div class="max-w-7xl mx-auto p-6">
-    <div class="flex justify-between items-center mb-6">
+    <div class="flex justify-between items-center mb-8">
       <h1 class="text-4xl font-bold flex items-center gap-3">🍿 Hash-Dashboard <span class="text-yellow-400">• Linux</span></h1>
       <button onclick="showAddModal()" class="px-6 py-3 bg-yellow-400 hover:bg-yellow-300 text-black font-semibold rounded-2xl">+ Add Miner</button>
     </div>
@@ -29,7 +33,7 @@
     <!-- MONITOR TAB -->
     <div id="monitor-tab">
       <div id="fleet" class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-10"></div>
-      <div id="grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"></div>
+      <div id="grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6"></div>
     </div>
 
     <!-- CONTROL TAB -->
@@ -60,11 +64,49 @@
   <script>
     const socket = io();
     let currentMiners = [];
-    let charts = {};
     let currentTab = 0;
 
+    // Pure popcorn splash
     function triggerPopcorn() {
-      confetti({ particleCount: 60, spread: 70, origin: { y: 0.6 } });
+      for (let i = 0; i < 45; i++) {
+        setTimeout(() => {
+          const p = document.createElement('div');
+          p.textContent = '🍿';
+          p.style.position = 'fixed';
+          p.style.left = Math.random() * 100 + 'vw';
+          p.style.top = '-70px';
+          p.style.fontSize = (2.4 + Math.random() * 1.8) + 'rem';
+          p.style.zIndex = '9999';
+          p.style.transition = 'all 5.2s linear';
+          document.body.appendChild(p);
+
+          setTimeout(() => {
+            p.style.transform = `translateY(${window.innerHeight + 400}px) rotate(${Math.random() * 1600 - 800}deg)`;
+            p.style.opacity = '0';
+          }, 100);
+
+          setTimeout(() => p.remove(), 5800);
+        }, i * 30);
+      }
+    }
+
+    // Block found notification (active & ready)
+    function showBlockFound(minerName, hashrate) {
+      triggerPopcorn();
+      confetti({
+        particleCount: 300,
+        spread: 120,
+        origin: { y: 0.6 }
+      });
+
+      const banner = document.createElement('div');
+      banner.innerHTML = `
+        <div class="fixed top-12 left-1/2 -translate-x-1/2 bg-gradient-to-r from-yellow-400 to-amber-400 text-black font-bold text-3xl px-16 py-10 rounded-3xl shadow-2xl flex items-center gap-6 z-[10000] border-4 border-white animate-pulse">
+          🍿 BLOCK FOUND! 🍿<br>
+          <span class="text-2xl">${minerName} — ${hashrate.toFixed(1)} GH/s</span>
+        </div>`;
+      document.body.appendChild(banner);
+      setTimeout(() => banner.remove(), 8000);
     }
 
     function renderFleet(stats) {
@@ -102,43 +144,43 @@
       const grid = document.getElementById('grid');
       grid.innerHTML = miners.map(m => {
         const s = stats[m.id] || { online: false };
-        const chartId = `chart-${m.id}`;
-
-        setTimeout(() => {
-          if (!charts[m.id] && s.hashrate) {
-            const ctx = document.getElementById(chartId);
-            if (ctx) {
-              charts[m.id] = new Chart(ctx, {
-                type: 'line',
-                data: { labels: ['', ''], datasets: [{ data: [s.hashrate * 0.95, s.hashrate], borderColor: '#facc15', tension: 0.4, borderWidth: 3, pointRadius: 0 }] },
-                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { display: false }, y: { display: false } } }
-              });
-            }
-          }
-        }, 200);
 
         return `
-          <div class="card bg-zinc-900 rounded-3xl p-6">
+          <div class="card bg-zinc-900 rounded-3xl p-6 border border-zinc-700">
             <div class="flex justify-between items-start">
               <div>
-                <div class="font-semibold text-xl">${m.name}</div>
-                <div class="text-zinc-400 text-sm">${m.ip}</div>
+                <div class="font-semibold text-2xl">${m.name}</div>
+                <div class="text-zinc-400 text-sm mt-1">${m.ip}</div>
               </div>
-              <span onclick="deleteMiner('${m.id}')" class="text-red-400 hover:text-red-300 cursor-pointer text-3xl">×</span>
+              <span onclick="deleteMiner('${m.id}')" class="text-red-400 hover:text-red-300 cursor-pointer text-3xl leading-none">×</span>
             </div>
-            <div class="mt-8 text-6xl font-semibold">${s.online ? s.hashrate.toFixed(1) : '—'} <span class="text-2xl text-zinc-400">GH/s</span></div>
-            <div class="grid grid-cols-3 gap-4 mt-10 text-sm">
-              <div>Temp<br><span class="font-medium">${s.online ? s.temp + '°C' : '—'}</span></div>
-              <div>VR<br><span class="font-medium">${s.online ? s.vrTemp + '°C' : '—'}</span></div>
-              <div>Power<br><span class="font-medium">${s.online ? Math.round(s.power) + 'W' : '—'}</span></div>
+
+            <div class="mt-10 text-7xl font-bold tracking-tighter">
+              ${s.online ? s.hashrate.toFixed(1) : '—'}
+              <span class="text-3xl text-zinc-400 font-normal">GH/s</span>
             </div>
-            <div class="mt-8 h-20"><canvas id="${chartId}" class="w-full h-full"></canvas></div>
-            <div class="mt-6 flex items-center gap-2 text-xs">
+
+            <div class="grid grid-cols-3 gap-6 mt-12 text-sm">
+              <div class="text-center">
+                <div class="text-zinc-400 text-xs">TEMP</div>
+                <div class="font-medium text-lg">${s.online ? s.temp + '°C' : '—'}</div>
+              </div>
+              <div class="text-center">
+                <div class="text-zinc-400 text-xs">VR TEMP</div>
+                <div class="font-medium text-lg">${s.online ? s.vrTemp + '°C' : '—'}</div>
+              </div>
+              <div class="text-center">
+                <div class="text-zinc-400 text-xs">POWER</div>
+                <div class="font-medium text-lg">${s.online ? Math.round(s.power) + 'W' : '—'}</div>
+              </div>
+            </div>
+
+            <div class="mt-8 flex items-center justify-between text-sm">
               <div class="flex items-center gap-2">
                 <div class="w-3 h-3 rounded-full ${s.online ? 'bg-emerald-400 animate-pulse' : 'bg-red-400'}"></div>
-                <span class="${s.online ? 'text-emerald-400' : 'text-red-400'}">${s.online ? 'ONLINE' : 'OFFLINE'}</span>
+                <span class="font-medium ${s.online ? 'text-emerald-400' : 'text-red-400'}">${s.online ? 'ONLINE' : 'OFFLINE'}</span>
               </div>
-              <div class="ml-auto text-zinc-400">${s.efficiency} W/TH</div>
+              <div class="text-zinc-400">${s.efficiency} W/TH</div>
             </div>
           </div>
         `;
@@ -148,13 +190,13 @@
     function renderControl() {
       const grid = document.getElementById('control-grid');
       grid.innerHTML = currentMiners.map(m => `
-        <div class="bg-zinc-900 rounded-3xl p-6">
-          <div class="font-semibold text-xl mb-1">${m.name}</div>
-          <div class="text-zinc-400 mb-6">${m.ip}</div>
-          <div class="space-y-3">
-            <button onclick="sendControl('${m.id}', 'restart')" class="w-full py-4 bg-red-600 hover:bg-red-700 rounded-2xl font-medium">Restart Miner</button>
-            <button onclick="sendControl('${m.id}', 'turbo')" class="w-full py-4 bg-yellow-400 hover:bg-yellow-300 text-black rounded-2xl font-medium">Turbo Overclock</button>
-            <button onclick="sendControl('${m.id}', 'eco')" class="w-full py-4 bg-zinc-700 hover:bg-zinc-600 rounded-2xl font-medium">Eco Mode</button>
+        <div class="bg-zinc-900 rounded-3xl p-6 border border-zinc-700">
+          <div class="font-semibold text-2xl mb-1">${m.name}</div>
+          <div class="text-zinc-400 mb-8">${m.ip}</div>
+          <div class="space-y-4">
+            <button onclick="sendControl('${m.id}', 'restart')" class="w-full py-5 bg-red-600 hover:bg-red-700 rounded-2xl font-medium text-lg">Restart Miner</button>
+            <button onclick="sendControl('${m.id}', 'turbo')" class="w-full py-5 bg-yellow-400 hover:bg-yellow-300 text-black rounded-2xl font-medium text-lg">Turbo Overclock</button>
+            <button onclick="sendControl('${m.id}', 'eco')" class="w-full py-5 bg-zinc-700 hover:bg-zinc-600 rounded-2xl font-medium text-lg">Eco Mode</button>
           </div>
         </div>
       `).join('');
@@ -162,14 +204,14 @@
 
     async function sendControl(id, action) {
       try {
-        const res = await fetch(`/api/control/${id}`, {
+        const response = await fetch(`/api/control/${id}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ action })
         });
-        const data = await res.json();
+        const data = await response.json();
         if (data.success) {
-          alert(`✅ ${action} command sent successfully!`);
+          alert(`✅ ${action} command sent!`);
         } else {
           alert('Command failed');
         }
@@ -216,7 +258,14 @@
       if (currentTab === 0) {
         renderFleet(stats);
         renderGrid(miners, stats);
+      } else if (currentTab === 1) {
+        renderControl();
       }
+    });
+
+    // Active block found listener
+    socket.on('blockFound', ({ minerName, hashrate }) => {
+      showBlockFound(minerName, hashrate);
     });
 
     window.onload = () => {

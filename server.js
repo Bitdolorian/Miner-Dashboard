@@ -10,6 +10,7 @@ const io = new Server(server);
 
 const PORT = 4000;
 const MINERS_FILE = path.join(__dirname, 'miners.json');
+const POLL_INTERVAL = 4000;
 
 let miners = [];
 let stats = {};
@@ -23,7 +24,7 @@ async function saveMiners() {
   await fs.writeJson(MINERS_FILE, miners, { spaces: 2 });
 }
 
-// Simple fetch
+// Fetch data
 async function fetchBitaxe(ip) {
   try {
     const res = await axios.get(`http://${ip}/api/system/info`, { timeout: 6000 });
@@ -50,24 +51,33 @@ async function pollAll() {
   io.emit('update', { miners, stats });
 }
 
-// Super simple control for debugging
+// Control - simple and direct
 app.post('/api/control/:id', async (req, res) => {
   const miner = miners.find(m => m.id === req.params.id);
   if (!miner) return res.status(404).json({ error: 'Miner not found' });
 
-  const action = req.body?.action || 'unknown';
-  console.log(`[CONTROL DEBUG] Action "${action}" requested for ${miner.ip}`);
+  const action = req.body?.action;
+  if (!action) return res.status(400).json({ error: 'No action provided' });
 
-  // Just test if we can reach the restart endpoint
+  console.log(`[CONTROL] ${action} for ${miner.ip}`);
+
   try {
-    const testUrl = `http://${miner.ip}/api/system/restart`;
-    console.log(`[CONTROL DEBUG] Testing ${testUrl}`);
-    const response = await axios.post(testUrl, {}, { timeout: 8000 });
-    console.log(`[CONTROL DEBUG] Success: ${JSON.stringify(response.data)}`);
-    return res.json({ success: true, message: 'Restart command sent successfully' });
+    if (action === 'restart') {
+      await axios.post(`http://${miner.ip}/api/system/restart`);
+      return res.json({ success: true });
+    } 
+    else if (action === 'turbo') {
+      await axios.patch(`http://${miner.ip}/api/system`, { frequency: 650, coreVoltage: 1250 });
+      return res.json({ success: true });
+    } 
+    else if (action === 'eco') {
+      await axios.patch(`http://${miner.ip}/api/system`, { frequency: 450, coreVoltage: 1100 });
+      return res.json({ success: true });
+    }
+    res.json({ success: false });
   } catch (e) {
-    console.error(`[CONTROL DEBUG] Failed: ${e.message}`);
-    return res.status(500).json({ error: `Command failed: ${e.message}` });
+    console.error(`Control error: ${e.message}`);
+    res.status(500).json({ error: 'Command failed' });
   }
 });
 
@@ -86,9 +96,16 @@ app.post('/api/miners', async (req, res) => {
   setTimeout(pollAll, 800);
 });
 
+app.delete('/api/miners/:id', async (req, res) => {
+  miners = miners.filter(m => m.id !== req.params.id);
+  delete stats[req.params.id];
+  await saveMiners();
+  res.json({ success: true });
+});
+
 loadMiners().then(() => {
   pollAll();
-  setInterval(pollAll, 4000);
+  setInterval(pollAll, POLL_INTERVAL);
   server.listen(PORT, () => {
     console.log(`🚀 Hash-Dashboard running at http://localhost:${PORT}`);
   });

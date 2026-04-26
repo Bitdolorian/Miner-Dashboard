@@ -38,6 +38,7 @@ Built as a self-hosted alternative to mobile apps like HashWatcher, optimized fo
 ## Start the dashboard:
 pm2 start server.js --name hash-dashboard
 pm2 save
+pm2 startup
 
 ## Open your browser and go to:
 http://YOUR_LOCAL_IP:4000

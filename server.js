@@ -14,8 +14,12 @@ const POLL_INTERVAL = 4000;
 
 let miners = [];
 let stats = {};
-let lastBestDiff = {};      // previous bestDiff
-let initialBestSet = {};    // track if we've seen the first real bestDiff
+let lastBestDiff = {};
+let initialBestSet = {};
+let lastRestartTime = {};   // Track when we sent a restart
+let lastBlockTime = {};
+
+app.use(express.json());
 
 async function loadMiners() {
   if (await fs.pathExists(MINERS_FILE)) {
@@ -40,7 +44,9 @@ async function fetchBitaxe(ip) {
       vrTemp: parseFloat(d.vrTemp || d.temp2 || 0),
       power: parseFloat(d.power || 0),
       efficiency: (d.power && d.hashRate) ? (d.power / d.hashRate).toFixed(2) : '—',
-      bestDiff: parseFloat(d.bestDiff || 0)
+      bestDiff: parseFloat(d.bestDiff || 0),
+      bestSessionDiff: parseFloat(d.bestSessionDiff || 0),
+      isUsingFallbackStratum: d.isUsingFallbackStratum || 0
     };
   } catch (e) {
     return { online: false };
@@ -49,30 +55,36 @@ async function fetchBitaxe(ip) {
 
 async function pollAll() {
   const newStats = {};
+  const now = Date.now();
 
   for (const miner of miners) {
     const data = await fetchBitaxe(miner.ip);
     newStats[miner.id] = data;
 
-    const currentBest = data.bestDiff || 0;
+    const currentBest = Math.max(data.bestDiff || 0, data.bestSessionDiff || 0);
     const previousBest = lastBestDiff[miner.id] || 0;
 
-    // Only check for block after we've seen the first real bestDiff
+    // Skip block detection right after a restart (60-second cooldown)
+    const timeSinceRestart = now - (lastRestartTime[miner.id] || 0);
+    if (timeSinceRestart < 60000) {
+      lastBestDiff[miner.id] = currentBest;
+      continue;
+    }
+
     if (!initialBestSet[miner.id]) {
-      if (currentBest > 100000) {  // reasonable first bestDiff threshold
+      if (currentBest > 5000000) {
         initialBestSet[miner.id] = true;
         lastBestDiff[miner.id] = currentBest;
       }
       continue;
     }
 
-    // Real block detection: needs a significant jump after initial bestDiff is set
-    if (currentBest > previousBest * 5 && currentBest > 500000000) {  // 5x jump + very high diff
-      console.log(`🎉 REAL BLOCK LIKELY FOUND on ${miner.name} (${miner.ip}) - bestDiff: ${currentBest}`);
-      io.emit('blockFound', {
-        minerName: miner.name,
-        hashrate: data.hashrate || 0
-      });
+    // Very strict real block detection
+    const timeSinceLastBlock = now - (lastBlockTime[miner.id] || 0);
+    if (currentBest > previousBest * 15 && currentBest > 2000000000 && timeSinceLastBlock > 60000) {
+      console.log(`🎉 REAL BLOCK FOUND on ${miner.name} (${miner.ip}) - bestDiff: ${currentBest}`);
+      io.emit('blockFound', { minerName: miner.name, hashrate: data.hashrate || 0 });
+      lastBlockTime[miner.id] = now;
     }
 
     lastBestDiff[miner.id] = currentBest;
@@ -82,36 +94,48 @@ async function pollAll() {
   io.emit('update', { miners, stats });
 }
 
-// Control endpoint (unchanged)
+// Control endpoint - track restart time
 app.post('/api/control/:id', async (req, res) => {
   const miner = miners.find(m => m.id === req.params.id);
-  if (!miner) return res.status(404).json({ error: 'Miner not found' });
+  if (!miner) return res.status(404).json({ success: false, error: 'Miner not found' });
 
-  const action = req.body?.action;
-  if (!action) return res.status(400).json({ error: 'No action provided' });
+  const { action, autofanspeed, fanspeed } = req.body || {};
 
   console.log(`[CONTROL] ${action} for ${miner.ip}`);
 
   try {
     if (action === 'restart') {
-      await axios.post(`http://${miner.ip}/api/system/restart`);
+      lastRestartTime[miner.id] = Date.now();   // Mark restart time
+      await axios.post(`http://${miner.ip}/api/system/restart`, {}, {
+        headers: { 'Content-Type': 'application/json' }
+      });
+      console.log(`[CONTROL] Restart sent successfully to ${miner.ip}`);
       return res.json({ success: true });
-    } else if (action === 'turbo') {
+    } 
+    else if (action === 'turbo') {
       await axios.patch(`http://${miner.ip}/api/system`, { frequency: 650, coreVoltage: 1250 });
       return res.json({ success: true });
-    } else if (action === 'eco') {
+    } 
+    else if (action === 'eco') {
       await axios.patch(`http://${miner.ip}/api/system`, { frequency: 450, coreVoltage: 1100 });
       return res.json({ success: true });
+    } 
+    else if (action === 'fan') {
+      const payload = {};
+      if (autofanspeed !== undefined) payload.autofanspeed = autofanspeed;
+      if (fanspeed !== undefined) payload.fanspeed = fanspeed;
+      await axios.patch(`http://${miner.ip}/api/system`, payload);
+      return res.json({ success: true });
     }
+
     res.json({ success: false });
   } catch (e) {
-    console.error(`Control error:`, e.message);
-    res.status(500).json({ error: 'Command failed' });
+    console.error(`[CONTROL ERROR] ${action} failed for ${miner.ip}:`, e.message);
+    res.status(500).json({ success: false });
   }
 });
 
 app.use(express.static('public'));
-app.use(express.json());
 
 app.get('/api/miners', (req, res) => res.json({ miners, stats }));
 
@@ -131,6 +155,8 @@ app.delete('/api/miners/:id', async (req, res) => {
   delete stats[req.params.id];
   delete lastBestDiff[req.params.id];
   delete initialBestSet[req.params.id];
+  delete lastRestartTime[req.params.id];
+  delete lastBlockTime[req.params.id];
   await saveMiners();
   res.json({ success: true });
 });

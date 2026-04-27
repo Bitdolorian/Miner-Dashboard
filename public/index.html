@@ -63,52 +63,23 @@
     let currentStats = {};
     let currentTab = 0;
 
-    // Splash screen: Confetti only (no popcorn)
+    // Splash: Confetti only
     function triggerSplash() {
-      confetti({
-        particleCount: 250,
-        spread: 90,
-        origin: { y: 0.6 }
-      });
-      // Extra burst
-      setTimeout(() => {
-        confetti({
-          particleCount: 150,
-          angle: 60,
-          spread: 70,
-          origin: { x: 0.1, y: 0.8 }
-        });
-      }, 200);
+      confetti({ particleCount: 280, spread: 100, origin: { y: 0.6 } });
     }
 
+    // Block notification: Pure confetti (no falling popcorn)
     function showBlockFound(minerName, hashrate) {
-      // Block found keeps popcorn + confetti as before
-      for (let i = 0; i < 35; i++) {
-        setTimeout(() => {
-          const p = document.createElement('div');
-          p.textContent = '🍿';
-          p.style.position = 'fixed';
-          p.style.left = Math.random() * 100 + 'vw';
-          p.style.top = '-70px';
-          p.style.fontSize = (2.4 + Math.random() * 1.8) + 'rem';
-          p.style.zIndex = '9999';
-          p.style.transition = 'all 5.2s linear';
-          document.body.appendChild(p);
-
-          setTimeout(() => {
-            p.style.transform = `translateY(${window.innerHeight + 400}px) rotate(${Math.random() * 1600 - 800}deg)`;
-            p.style.opacity = '0';
-          }, 100);
-
-          setTimeout(() => p.remove(), 5800);
-        }, i * 30);
-      }
-      confetti({ particleCount: 300, spread: 120, origin: { y: 0.6 } });
+      confetti({
+        particleCount: 400,
+        spread: 120,
+        origin: { y: 0.6 }
+      });
 
       const banner = document.createElement('div');
       banner.innerHTML = `
         <div class="fixed top-12 left-1/2 -translate-x-1/2 bg-gradient-to-r from-yellow-400 to-amber-400 text-black font-bold text-3xl px-16 py-10 rounded-3xl shadow-2xl flex items-center gap-6 z-[10000] border-4 border-white animate-pulse">
-          🍿 BLOCK FOUND! 🍿<br>
+          🎉 BLOCK FOUND! 🎉<br>
           <span class="text-2xl">${minerName} — ${hashrate.toFixed(1)} GH/s</span>
         </div>`;
       document.body.appendChild(banner);
@@ -150,15 +121,11 @@
       const grid = document.getElementById('grid');
       grid.innerHTML = miners.map(m => {
         const s = stats[m.id] || { online: false };
-
-        let poolHTML = '<span class="text-zinc-500 text-xs">No pool data</span>';
-        if (s.online) {
-          const isFallback = (s.isUsingFallbackStratum === 1 || s.isUsingFallbackStratum === true);
-          poolHTML = `
-            <span class="text-xs ${isFallback ? 'text-orange-400' : 'text-emerald-400'}">
-              ${isFallback ? '🔄 Fallback Pool' : '✅ Primary Pool'}
-            </span>`;
-        }
+        const isFallback = (s.isUsingFallbackStratum === 1 || s.isUsingFallbackStratum === true);
+        const poolHTML = s.online ?
+          `<span class="text-xs ${isFallback ? 'text-orange-400' : 'text-emerald-400'}">
+            ${isFallback ? '🔄 Fallback Pool' : '✅ Primary Pool'}
+          </span>` : '<span class="text-zinc-500 text-xs">No pool data</span>';
 
         return `
           <div class="card bg-zinc-900 rounded-3xl p-6 border border-zinc-700">
@@ -219,8 +186,8 @@
                   <span>Fan Speed</span>
                   <span id="fan-val-${m.id}" class="font-mono">${Math.round(currentFan)}%</span>
                 </div>
-                <input type="range" min="25" max="100" value="${Math.round(currentFan)}" step="5" 
-                       id="fan-slider-${m.id}" 
+                <input type="range" min="25" max="100" value="${Math.round(currentFan)}" step="5"
+                       id="fan-slider-${m.id}"
                        oninput="liveFanUpdate('${m.id}', this.value)"
                        class="w-full">
 
@@ -236,16 +203,22 @@
     }
 
     async function sendControl(id, action) {
+      console.log(`[DEBUG] Sending "${action}" to miner ${id}`);
       try {
         const res = await fetch(`/api/control/${id}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action })
+          body: JSON.stringify({ action: action })
         });
         const data = await res.json();
-        if (data.success) alert(`✅ ${action} sent!`);
-        else alert('Command failed');
+        console.log(`[DEBUG] Response:`, data);
+        if (data.success) {
+          alert(`✅ ${action} sent successfully!`);
+        } else {
+          alert('Command failed');
+        }
       } catch (e) {
+        console.error('[DEBUG] Error:', e);
         alert('Failed to send command');
       }
     }
@@ -317,7 +290,7 @@
     });
 
     window.onload = () => {
-      triggerSplash();   // Changed to confetti only
+      triggerSplash();
       switchTab(0);
     };
   </script>

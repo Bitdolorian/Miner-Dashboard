@@ -15,7 +15,8 @@ Built as a self-hosted alternative to mobile apps like HashWatcher, optimized fo
 - Clean, modern dark UI with live charts
 - Monitor + Control tabs
 - Restart, Turbo Overclock, and Eco Mode controls
-- Popcorn animation on load (for fun)
+- fan controls auto or manual (with slider)
+- confetti animation on load (for fun)
 - Fully local — no cloud, no accounts
 - Runs on port 4000 by default
 - Auto-updates every 4 seconds

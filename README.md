@@ -5,8 +5,10 @@ A clean, local web-based dashboard for monitoring and controlling **Miners** (an
 Built as a self-hosted alternative to mobile apps like HashWatcher, optimized for Linux/Umbrel users.
 
 <p align="center">
-  <img src="asset/screen.jpg" width="700" alt="Miner-Dashboard">
-
+  <img src="asset/main.jpg" width="700" alt="Miner-Dashboard">
+<p align="center">
+  <img src="asset/controls.jpg" width="700" alt="Miner-Dashboard">
+  
 ## Features
 
 - Real-time hashrate, temperature, VR temp, power, and efficiency monitoring

@@ -9,19 +9,15 @@
   <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js"></script>
   <style>
     body { font-family: system-ui, sans-serif; }
-    .card {
-      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    }
-    .card:hover {
-      transform: translateY(-8px);
-      box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
-    }
+    .card { transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+    .card:hover { transform: translateY(-8px); box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1); }
+    input[type="range"] { accent-color: #facc15; }
   </style>
 </head>
 <body class="bg-zinc-950 text-white min-h-screen">
   <div class="max-w-7xl mx-auto p-6">
     <div class="flex justify-between items-center mb-8">
-      <h1 class="text-4xl font-bold flex items-center gap-3">🍿 Hash-Dashboard <span class="text-yellow-400">• Linux</span></h1>
+      <h1 class="text-4xl font-bold flex items-center gap-3">Hash-Dashboard <span class="text-yellow-400">• Linux</span></h1>
       <button onclick="showAddModal()" class="px-6 py-3 bg-yellow-400 hover:bg-yellow-300 text-black font-semibold rounded-2xl">+ Add Miner</button>
     </div>
 
@@ -64,11 +60,30 @@
   <script>
     const socket = io();
     let currentMiners = [];
+    let currentStats = {};
     let currentTab = 0;
 
-    // Pure popcorn splash
-    function triggerPopcorn() {
-      for (let i = 0; i < 45; i++) {
+    // Splash screen: Confetti only (no popcorn)
+    function triggerSplash() {
+      confetti({
+        particleCount: 250,
+        spread: 90,
+        origin: { y: 0.6 }
+      });
+      // Extra burst
+      setTimeout(() => {
+        confetti({
+          particleCount: 150,
+          angle: 60,
+          spread: 70,
+          origin: { x: 0.1, y: 0.8 }
+        });
+      }, 200);
+    }
+
+    function showBlockFound(minerName, hashrate) {
+      // Block found keeps popcorn + confetti as before
+      for (let i = 0; i < 35; i++) {
         setTimeout(() => {
           const p = document.createElement('div');
           p.textContent = '🍿';
@@ -88,16 +103,7 @@
           setTimeout(() => p.remove(), 5800);
         }, i * 30);
       }
-    }
-
-    // Block found notification (active & ready)
-    function showBlockFound(minerName, hashrate) {
-      triggerPopcorn();
-      confetti({
-        particleCount: 300,
-        spread: 120,
-        origin: { y: 0.6 }
-      });
+      confetti({ particleCount: 300, spread: 120, origin: { y: 0.6 } });
 
       const banner = document.createElement('div');
       banner.innerHTML = `
@@ -145,6 +151,15 @@
       grid.innerHTML = miners.map(m => {
         const s = stats[m.id] || { online: false };
 
+        let poolHTML = '<span class="text-zinc-500 text-xs">No pool data</span>';
+        if (s.online) {
+          const isFallback = (s.isUsingFallbackStratum === 1 || s.isUsingFallbackStratum === true);
+          poolHTML = `
+            <span class="text-xs ${isFallback ? 'text-orange-400' : 'text-emerald-400'}">
+              ${isFallback ? '🔄 Fallback Pool' : '✅ Primary Pool'}
+            </span>`;
+        }
+
         return `
           <div class="card bg-zinc-900 rounded-3xl p-6 border border-zinc-700">
             <div class="flex justify-between items-start">
@@ -161,18 +176,13 @@
             </div>
 
             <div class="grid grid-cols-3 gap-6 mt-12 text-sm">
-              <div class="text-center">
-                <div class="text-zinc-400 text-xs">TEMP</div>
-                <div class="font-medium text-lg">${s.online ? s.temp + '°C' : '—'}</div>
-              </div>
-              <div class="text-center">
-                <div class="text-zinc-400 text-xs">VR TEMP</div>
-                <div class="font-medium text-lg">${s.online ? s.vrTemp + '°C' : '—'}</div>
-              </div>
-              <div class="text-center">
-                <div class="text-zinc-400 text-xs">POWER</div>
-                <div class="font-medium text-lg">${s.online ? Math.round(s.power) + 'W' : '—'}</div>
-              </div>
+              <div class="text-center"><div class="text-zinc-400 text-xs">TEMP</div><div class="font-medium text-lg">${s.online ? s.temp + '°C' : '—'}</div></div>
+              <div class="text-center"><div class="text-zinc-400 text-xs">VR TEMP</div><div class="font-medium text-lg">${s.online ? s.vrTemp + '°C' : '—'}</div></div>
+              <div class="text-center"><div class="text-zinc-400 text-xs">POWER</div><div class="font-medium text-lg">${s.online ? Math.round(s.power) + 'W' : '—'}</div></div>
+            </div>
+
+            <div class="mt-8 text-center text-sm border-t border-zinc-700 pt-6">
+              ${poolHTML}
             </div>
 
             <div class="mt-8 flex items-center justify-between text-sm">
@@ -180,7 +190,7 @@
                 <div class="w-3 h-3 rounded-full ${s.online ? 'bg-emerald-400 animate-pulse' : 'bg-red-400'}"></div>
                 <span class="font-medium ${s.online ? 'text-emerald-400' : 'text-red-400'}">${s.online ? 'ONLINE' : 'OFFLINE'}</span>
               </div>
-              <div class="text-zinc-400">${s.efficiency} W/TH</div>
+              <div class="text-zinc-400">${s.efficiency || '—'} W/TH</div>
             </div>
           </div>
         `;
@@ -189,35 +199,73 @@
 
     function renderControl() {
       const grid = document.getElementById('control-grid');
-      grid.innerHTML = currentMiners.map(m => `
-        <div class="bg-zinc-900 rounded-3xl p-6 border border-zinc-700">
-          <div class="font-semibold text-2xl mb-1">${m.name}</div>
-          <div class="text-zinc-400 mb-8">${m.ip}</div>
-          <div class="space-y-4">
-            <button onclick="sendControl('${m.id}', 'restart')" class="w-full py-5 bg-red-600 hover:bg-red-700 rounded-2xl font-medium text-lg">Restart Miner</button>
-            <button onclick="sendControl('${m.id}', 'turbo')" class="w-full py-5 bg-yellow-400 hover:bg-yellow-300 text-black rounded-2xl font-medium text-lg">Turbo Overclock</button>
-            <button onclick="sendControl('${m.id}', 'eco')" class="w-full py-5 bg-zinc-700 hover:bg-zinc-600 rounded-2xl font-medium text-lg">Eco Mode</button>
+      grid.innerHTML = currentMiners.map(m => {
+        const s = currentStats[m.id] || {};
+        const currentFan = s.manualFanSpeed || s.fanspeed || 100;
+
+        return `
+          <div class="bg-zinc-900 rounded-3xl p-6 border border-zinc-700">
+            <div class="font-semibold text-2xl mb-1">${m.name}</div>
+            <div class="text-zinc-400 mb-6">${m.ip}</div>
+
+            <div class="space-y-6">
+              <button onclick="sendControl('${m.id}', 'restart')" class="w-full py-5 bg-red-600 hover:bg-red-700 rounded-2xl font-medium text-lg">Restart Miner</button>
+              <button onclick="sendControl('${m.id}', 'turbo')" class="w-full py-5 bg-yellow-400 hover:bg-yellow-300 text-black rounded-2xl font-medium text-lg">Turbo Overclock</button>
+              <button onclick="sendControl('${m.id}', 'eco')" class="w-full py-5 bg-zinc-700 hover:bg-zinc-600 rounded-2xl font-medium text-lg">Eco Mode</button>
+
+              <!-- Fan Control -->
+              <div class="bg-zinc-800 rounded-2xl p-5">
+                <div class="flex justify-between mb-3 text-sm">
+                  <span>Fan Speed</span>
+                  <span id="fan-val-${m.id}" class="font-mono">${Math.round(currentFan)}%</span>
+                </div>
+                <input type="range" min="25" max="100" value="${Math.round(currentFan)}" step="5" 
+                       id="fan-slider-${m.id}" 
+                       oninput="liveFanUpdate('${m.id}', this.value)"
+                       class="w-full">
+
+                <div class="flex gap-3 mt-4">
+                  <button onclick="sendFan('${m.id}', true)" class="flex-1 py-3 text-xs bg-emerald-600 hover:bg-emerald-700 rounded-xl">Auto Fan</button>
+                  <button onclick="sendFan('${m.id}', false)" class="flex-1 py-3 text-xs bg-zinc-700 hover:bg-zinc-600 rounded-xl">Manual Mode</button>
+                </div>
+              </div>
+            </div>
           </div>
-        </div>
-      `).join('');
+        `;
+      }).join('');
     }
 
     async function sendControl(id, action) {
       try {
-        const response = await fetch(`/api/control/${id}`, {
+        const res = await fetch(`/api/control/${id}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ action })
         });
-        const data = await response.json();
-        if (data.success) {
-          alert(`✅ ${action} command sent!`);
-        } else {
-          alert('Command failed');
-        }
+        const data = await res.json();
+        if (data.success) alert(`✅ ${action} sent!`);
+        else alert('Command failed');
       } catch (e) {
         alert('Failed to send command');
       }
+    }
+
+    async function sendFan(id, isAuto) {
+      try {
+        await fetch(`/api/control/${id}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'fan', autofanspeed: isAuto ? 1 : 0 })
+        });
+        alert(`Fan set to ${isAuto ? 'Auto' : 'Manual'} mode`);
+      } catch (e) {
+        alert('Failed to set fan mode');
+      }
+    }
+
+    function liveFanUpdate(id, percent) {
+      const el = document.getElementById(`fan-val-${id}`);
+      if (el) el.textContent = percent + '%';
     }
 
     function switchTab(tab) {
@@ -255,6 +303,7 @@
 
     socket.on('update', ({ miners, stats }) => {
       currentMiners = miners;
+      currentStats = stats;
       if (currentTab === 0) {
         renderFleet(stats);
         renderGrid(miners, stats);
@@ -263,13 +312,12 @@
       }
     });
 
-    // Active block found listener
     socket.on('blockFound', ({ minerName, hashrate }) => {
       showBlockFound(minerName, hashrate);
     });
 
     window.onload = () => {
-      triggerPopcorn();
+      triggerSplash();   // Changed to confetti only
       switchTab(0);
     };
   </script>

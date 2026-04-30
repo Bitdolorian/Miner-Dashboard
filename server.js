@@ -1,6 +1,7 @@
 const express = require('express');
 const { Server } = require('socket.io');
 const axios = require('axios');
+const net = require('net');
 const fs = require('fs-extra');
 const path = require('path');
 
@@ -10,14 +11,10 @@ const io = new Server(server);
 
 const PORT = 4000;
 const MINERS_FILE = path.join(__dirname, 'miners.json');
-const POLL_INTERVAL = 4000;
+const POLL_INTERVAL = 6000;
 
 let miners = [];
 let stats = {};
-let lastBestDiff = {};
-let initialBestSet = {};
-let lastRestartTime = {};   // Track when we sent a restart
-let lastBlockTime = {};
 
 app.use(express.json());
 
@@ -33,7 +30,8 @@ async function saveMiners() {
   await fs.writeJson(MINERS_FILE, miners, { spaces: 2 });
 }
 
-async function fetchBitaxe(ip) {
+// AxeOS Fetch
+async function fetchAxeOS(ip) {
   try {
     const res = await axios.get(`http://${ip}/api/system/info`, { timeout: 7000 });
     const d = res.data;
@@ -44,93 +42,120 @@ async function fetchBitaxe(ip) {
       vrTemp: parseFloat(d.vrTemp || d.temp2 || 0),
       power: parseFloat(d.power || 0),
       efficiency: (d.power && d.hashRate) ? (d.power / d.hashRate).toFixed(2) : '—',
-      bestDiff: parseFloat(d.bestDiff || 0),
-      bestSessionDiff: parseFloat(d.bestSessionDiff || 0),
-      isUsingFallbackStratum: d.isUsingFallbackStratum || 0
+      bestDiff: parseFloat(d.bestDiff || d.bestSessionDiff || 0),
+      isUsingFallbackStratum: d.isUsingFallbackStratum || 0,
+      type: 'axeos'
     };
   } catch (e) {
     return { online: false };
   }
 }
 
+// Improved CGMiner parser for your specific output
+async function fetchCGMiner(ip) {
+  return new Promise((resolve) => {
+    const client = new net.Socket();
+    let buffer = '';
+
+    console.log(`[CGMiner] Connecting to ${ip}:4028`);
+
+    client.setTimeout(10000);
+
+    client.connect(4028, ip, () => {
+      client.write('{"command":"summary+stats"}');
+    });
+
+    client.on('data', (chunk) => {
+      buffer += chunk.toString();
+    });
+
+    client.on('end', () => {
+      console.log(`[CGMiner] Received ${buffer.length} bytes from ${ip}`);
+
+      try {
+        // Clean the response
+        let clean = buffer.replace(/\|/g, '').trim();
+        // Remove any non-printable characters
+        clean = clean.replace(/[^\x20-\x7E]/g, '');
+
+        const json = JSON.parse(clean);
+
+        const summary = json.summary?.[0]?.SUMMARY?.[0] || json.SUMMARY?.[0] || {};
+        const stats = json.stats?.[0]?.STATS?.[1] || json.STATS?.[1] || json.STATS?.[0] || {};
+
+        // Extract hashrate (MHS 5s is in MH/s)
+        let hashrate = 0;
+        if (summary['MHS 5s']) hashrate = parseFloat(summary['MHS 5s']) / 1000;   // convert to GH/s
+        else if (summary['MHS av']) hashrate = parseFloat(summary['MHS av']) / 1000;
+
+        const power = parseFloat(stats['Power'] || stats['Iout'] || 0);
+        const temp = parseFloat(stats['Temp'] || stats['temp'] || stats['LastTemp'] || 0);
+
+        console.log(`[CGMiner Success] ${ip} → ${hashrate.toFixed(1)} GH/s, ${temp}°C, ${power}W`);
+
+        resolve({
+          online: true,
+          hashrate: hashrate,
+          temp: temp,
+          vrTemp: 0,
+          power: power,
+          efficiency: (power && hashrate) ? (power / hashrate).toFixed(2) : '—',
+          bestDiff: 0,
+          isUsingFallbackStratum: 0,
+          type: 'cgminer'
+        });
+      } catch (e) {
+        console.log(`[CGMiner Parse Error] ${ip}:`, e.message);
+        resolve({ online: false });
+      }
+    });
+
+    client.on('timeout', () => {
+      console.log(`[CGMiner] Timeout on ${ip}`);
+      client.destroy();
+      resolve({ online: false });
+    });
+
+    client.on('error', (err) => {
+      console.log(`[CGMiner] Error on ${ip}:`, err.message);
+      resolve({ online: false });
+    });
+  });
+}
+
+async function fetchMiner(ip) {
+  let data = await fetchAxeOS(ip);
+  if (data.online) return data;
+  return await fetchCGMiner(ip);
+}
+
 async function pollAll() {
   const newStats = {};
-  const now = Date.now();
 
   for (const miner of miners) {
-    const data = await fetchBitaxe(miner.ip);
+    const data = await fetchMiner(miner.ip);
     newStats[miner.id] = data;
-
-    const currentBest = Math.max(data.bestDiff || 0, data.bestSessionDiff || 0);
-    const previousBest = lastBestDiff[miner.id] || 0;
-
-    // Skip block detection right after a restart (60-second cooldown)
-    const timeSinceRestart = now - (lastRestartTime[miner.id] || 0);
-    if (timeSinceRestart < 60000) {
-      lastBestDiff[miner.id] = currentBest;
-      continue;
-    }
-
-    if (!initialBestSet[miner.id]) {
-      if (currentBest > 5000000) {
-        initialBestSet[miner.id] = true;
-        lastBestDiff[miner.id] = currentBest;
-      }
-      continue;
-    }
-
-    // Very strict real block detection
-    const timeSinceLastBlock = now - (lastBlockTime[miner.id] || 0);
-    if (currentBest > previousBest * 15 && currentBest > 2000000000 && timeSinceLastBlock > 60000) {
-      console.log(`🎉 REAL BLOCK FOUND on ${miner.name} (${miner.ip}) - bestDiff: ${currentBest}`);
-      io.emit('blockFound', { minerName: miner.name, hashrate: data.hashrate || 0 });
-      lastBlockTime[miner.id] = now;
-    }
-
-    lastBestDiff[miner.id] = currentBest;
   }
 
   stats = newStats;
   io.emit('update', { miners, stats });
 }
 
-// Control endpoint - track restart time
+// Simple control (restart works for AxeOS only for now)
 app.post('/api/control/:id', async (req, res) => {
   const miner = miners.find(m => m.id === req.params.id);
-  if (!miner) return res.status(404).json({ success: false, error: 'Miner not found' });
+  if (!miner) return res.status(404).json({ success: false });
 
-  const { action, autofanspeed, fanspeed } = req.body || {};
-
+  const { action } = req.body || {};
   console.log(`[CONTROL] ${action} for ${miner.ip}`);
 
   try {
     if (action === 'restart') {
-      lastRestartTime[miner.id] = Date.now();   // Mark restart time
-      await axios.post(`http://${miner.ip}/api/system/restart`, {}, {
-        headers: { 'Content-Type': 'application/json' }
-      });
-      console.log(`[CONTROL] Restart sent successfully to ${miner.ip}`);
-      return res.json({ success: true });
-    } 
-    else if (action === 'turbo') {
-      await axios.patch(`http://${miner.ip}/api/system`, { frequency: 650, coreVoltage: 1250 });
-      return res.json({ success: true });
-    } 
-    else if (action === 'eco') {
-      await axios.patch(`http://${miner.ip}/api/system`, { frequency: 450, coreVoltage: 1100 });
-      return res.json({ success: true });
-    } 
-    else if (action === 'fan') {
-      const payload = {};
-      if (autofanspeed !== undefined) payload.autofanspeed = autofanspeed;
-      if (fanspeed !== undefined) payload.fanspeed = fanspeed;
-      await axios.patch(`http://${miner.ip}/api/system`, payload);
+      await axios.post(`http://${miner.ip}/api/system/restart`, {}, { timeout: 5000 }).catch(() => {});
       return res.json({ success: true });
     }
-
     res.json({ success: false });
   } catch (e) {
-    console.error(`[CONTROL ERROR] ${action} failed for ${miner.ip}:`, e.message);
     res.status(500).json({ success: false });
   }
 });
@@ -147,16 +172,12 @@ app.post('/api/miners', async (req, res) => {
   miners.push({ id, name, ip });
   await saveMiners();
   res.json({ success: true });
-  setTimeout(pollAll, 800);
+  setTimeout(pollAll, 1500);
 });
 
 app.delete('/api/miners/:id', async (req, res) => {
   miners = miners.filter(m => m.id !== req.params.id);
   delete stats[req.params.id];
-  delete lastBestDiff[req.params.id];
-  delete initialBestSet[req.params.id];
-  delete lastRestartTime[req.params.id];
-  delete lastBlockTime[req.params.id];
   await saveMiners();
   res.json({ success: true });
 });

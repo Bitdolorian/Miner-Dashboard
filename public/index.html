@@ -63,18 +63,12 @@
     let currentStats = {};
     let currentTab = 0;
 
-    // Splash: Confetti only
     function triggerSplash() {
       confetti({ particleCount: 280, spread: 100, origin: { y: 0.6 } });
     }
 
-    // Block notification: Pure confetti (no falling popcorn)
     function showBlockFound(minerName, hashrate) {
-      confetti({
-        particleCount: 400,
-        spread: 120,
-        origin: { y: 0.6 }
-      });
+      confetti({ particleCount: 400, spread: 120, origin: { y: 0.6 } });
 
       const banner = document.createElement('div');
       banner.innerHTML = `
@@ -84,6 +78,22 @@
         </div>`;
       document.body.appendChild(banner);
       setTimeout(() => banner.remove(), 8000);
+    }
+
+    function formatBestDiff(diff) {
+      if (!diff || diff === 0) return '—';
+      if (diff < 1000) return diff.toLocaleString();
+
+      const units = ['K', 'M', 'G', 'T'];
+      let value = diff;
+      let unitIndex = -1;
+
+      while (value >= 1000 && unitIndex < units.length - 1) {
+        value /= 1000;
+        unitIndex++;
+      }
+
+      return value.toFixed(unitIndex > 1 ? 2 : 1) + units[unitIndex];
     }
 
     function renderFleet(stats) {
@@ -122,6 +132,8 @@
       grid.innerHTML = miners.map(m => {
         const s = stats[m.id] || { online: false };
         const isFallback = (s.isUsingFallbackStratum === 1 || s.isUsingFallbackStratum === true);
+        const bestDiffStr = formatBestDiff(s.bestDiff);
+
         const poolHTML = s.online ?
           `<span class="text-xs ${isFallback ? 'text-orange-400' : 'text-emerald-400'}">
             ${isFallback ? '🔄 Fallback Pool' : '✅ Primary Pool'}
@@ -137,12 +149,12 @@
               <span onclick="deleteMiner('${m.id}')" class="text-red-400 hover:text-red-300 cursor-pointer text-3xl leading-none">×</span>
             </div>
 
-            <div class="mt-10 text-7xl font-bold tracking-tighter">
+            <div class="mt-8 text-7xl font-bold tracking-tighter">
               ${s.online ? s.hashrate.toFixed(1) : '—'}
               <span class="text-3xl text-zinc-400 font-normal">GH/s</span>
             </div>
 
-            <div class="grid grid-cols-3 gap-6 mt-12 text-sm">
+            <div class="grid grid-cols-3 gap-6 mt-10 text-sm">
               <div class="text-center"><div class="text-zinc-400 text-xs">TEMP</div><div class="font-medium text-lg">${s.online ? s.temp + '°C' : '—'}</div></div>
               <div class="text-center"><div class="text-zinc-400 text-xs">VR TEMP</div><div class="font-medium text-lg">${s.online ? s.vrTemp + '°C' : '—'}</div></div>
               <div class="text-center"><div class="text-zinc-400 text-xs">POWER</div><div class="font-medium text-lg">${s.online ? Math.round(s.power) + 'W' : '—'}</div></div>
@@ -152,7 +164,11 @@
               ${poolHTML}
             </div>
 
-            <div class="mt-8 flex items-center justify-between text-sm">
+            <div class="mt-6 text-center text-xs text-zinc-400">
+              Best Diff: <span class="font-mono text-amber-400">${bestDiffStr}</span>
+            </div>
+
+            <div class="mt-6 flex items-center justify-between text-sm">
               <div class="flex items-center gap-2">
                 <div class="w-3 h-3 rounded-full ${s.online ? 'bg-emerald-400 animate-pulse' : 'bg-red-400'}"></div>
                 <span class="font-medium ${s.online ? 'text-emerald-400' : 'text-red-400'}">${s.online ? 'ONLINE' : 'OFFLINE'}</span>
@@ -180,7 +196,6 @@
               <button onclick="sendControl('${m.id}', 'turbo')" class="w-full py-5 bg-yellow-400 hover:bg-yellow-300 text-black rounded-2xl font-medium text-lg">Turbo Overclock</button>
               <button onclick="sendControl('${m.id}', 'eco')" class="w-full py-5 bg-zinc-700 hover:bg-zinc-600 rounded-2xl font-medium text-lg">Eco Mode</button>
 
-              <!-- Fan Control -->
               <div class="bg-zinc-800 rounded-2xl p-5">
                 <div class="flex justify-between mb-3 text-sm">
                   <span>Fan Speed</span>
@@ -203,7 +218,6 @@
     }
 
     async function sendControl(id, action) {
-      console.log(`[DEBUG] Sending "${action}" to miner ${id}`);
       try {
         const res = await fetch(`/api/control/${id}`, {
           method: 'POST',
@@ -211,14 +225,12 @@
           body: JSON.stringify({ action: action })
         });
         const data = await res.json();
-        console.log(`[DEBUG] Response:`, data);
         if (data.success) {
           alert(`✅ ${action} sent successfully!`);
         } else {
           alert('Command failed');
         }
       } catch (e) {
-        console.error('[DEBUG] Error:', e);
         alert('Failed to send command');
       }
     }

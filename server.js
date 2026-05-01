@@ -30,7 +30,7 @@ async function saveMiners() {
   await fs.writeJson(MINERS_FILE, miners, { spaces: 2 });
 }
 
-// AxeOS Fetch
+// AxeOS
 async function fetchAxeOS(ip) {
   try {
     const res = await axios.get(`http://${ip}/api/system/info`, { timeout: 7000 });
@@ -51,13 +51,11 @@ async function fetchAxeOS(ip) {
   }
 }
 
-// Improved CGMiner parser for your specific output
+// CGMiner - Improved Best Diff / Best Share extraction
 async function fetchCGMiner(ip) {
   return new Promise((resolve) => {
     const client = new net.Socket();
     let buffer = '';
-
-    console.log(`[CGMiner] Connecting to ${ip}:4028`);
 
     client.setTimeout(10000);
 
@@ -70,56 +68,71 @@ async function fetchCGMiner(ip) {
     });
 
     client.on('end', () => {
-      console.log(`[CGMiner] Received ${buffer.length} bytes from ${ip}`);
-
       try {
-        // Clean the response
-        let clean = buffer.replace(/\|/g, '').trim();
-        // Remove any non-printable characters
-        clean = clean.replace(/[^\x20-\x7E]/g, '');
-
-        const json = JSON.parse(clean);
-
-        const summary = json.summary?.[0]?.SUMMARY?.[0] || json.SUMMARY?.[0] || {};
-        const stats = json.stats?.[0]?.STATS?.[1] || json.STATS?.[1] || json.STATS?.[0] || {};
-
-        // Extract hashrate (MHS 5s is in MH/s)
+        // Hashrate
         let hashrate = 0;
-        if (summary['MHS 5s']) hashrate = parseFloat(summary['MHS 5s']) / 1000;   // convert to GH/s
-        else if (summary['MHS av']) hashrate = parseFloat(summary['MHS av']) / 1000;
+        const mhsMatch = buffer.match(/MHS 5s["\s:]*([\d.]+)/);
+        if (mhsMatch) hashrate = parseFloat(mhsMatch[1]) / 1000;
 
-        const power = parseFloat(stats['Power'] || stats['Iout'] || 0);
-        const temp = parseFloat(stats['Temp'] || stats['temp'] || stats['LastTemp'] || 0);
+        // Temperature
+        let temp = 0;
+        const tempMatch = buffer.match(/Temp["\s:]*([\d.]+)/i) || buffer.match(/LastTemp["\s:]*([\d.]+)/i);
+        if (tempMatch) temp = parseFloat(tempMatch[1]);
 
-        console.log(`[CGMiner Success] ${ip} → ${hashrate.toFixed(1)} GH/s, ${temp}°C, ${power}W`);
+        // Power
+        let power = 0;
+        const powerMatch = buffer.match(/Power["\s:]*([\d.]+)/i) || buffer.match(/Iout["\s:]*([\d.]+)/i);
+        if (powerMatch) power = parseFloat(powerMatch[1]);
+
+        // Best Diff / Best Share extraction
+        let bestDiff = 0;
+
+        // Look for "Best Share" field
+        const bestShareMatch = buffer.match(/Best Share["\s:]*([\d.]+[KMBT]?)/i);
+        if (bestShareMatch) {
+          let val = bestShareMatch[1].toUpperCase();
+          let num = parseFloat(val.replace(/[KMBT]/, ''));
+          if (val.includes('K')) num *= 1000;
+          if (val.includes('M')) num *= 1000000;
+          if (val.includes('B')) num *= 1000000000;
+          bestDiff = num;
+        }
+
+        // Fallback: any "Diff XX.XK" or "XX.XK" patterns
+        if (bestDiff === 0) {
+          const diffRegex = /(?:Diff|Share)["\s:=]*(\d+\.?\d*[KMBT]?)/gi;
+          let match;
+          while ((match = diffRegex.exec(buffer)) !== null) {
+            let val = match[1].toUpperCase();
+            let num = parseFloat(val.replace(/[KMBT]/, ''));
+            if (val.includes('K')) num *= 1000;
+            if (val.includes('M')) num *= 1000000;
+            if (val.includes('B')) num *= 1000000000;
+            if (num > bestDiff) bestDiff = num;
+          }
+        }
+
+        console.log(`[CGMiner] ${ip} → ${hashrate.toFixed(1)} GH/s | Temp: ${temp.toFixed(1)}°C | Power: ${power.toFixed(2)}W | Best Diff: ${bestDiff}`);
 
         resolve({
           online: true,
-          hashrate: hashrate,
-          temp: temp,
+          hashrate,
+          temp,
           vrTemp: 0,
-          power: power,
+          power,
           efficiency: (power && hashrate) ? (power / hashrate).toFixed(2) : '—',
-          bestDiff: 0,
+          bestDiff: bestDiff,
           isUsingFallbackStratum: 0,
           type: 'cgminer'
         });
       } catch (e) {
-        console.log(`[CGMiner Parse Error] ${ip}:`, e.message);
+        console.log(`[CGMiner Parse Error] ${ip}`);
         resolve({ online: false });
       }
     });
 
-    client.on('timeout', () => {
-      console.log(`[CGMiner] Timeout on ${ip}`);
-      client.destroy();
-      resolve({ online: false });
-    });
-
-    client.on('error', (err) => {
-      console.log(`[CGMiner] Error on ${ip}:`, err.message);
-      resolve({ online: false });
-    });
+    client.on('timeout', () => { client.destroy(); resolve({ online: false }); });
+    client.on('error', () => resolve({ online: false }));
   });
 }
 
@@ -131,17 +144,13 @@ async function fetchMiner(ip) {
 
 async function pollAll() {
   const newStats = {};
-
   for (const miner of miners) {
-    const data = await fetchMiner(miner.ip);
-    newStats[miner.id] = data;
+    newStats[miner.id] = await fetchMiner(miner.ip);
   }
-
   stats = newStats;
   io.emit('update', { miners, stats });
 }
 
-// Simple control (restart works for AxeOS only for now)
 app.post('/api/control/:id', async (req, res) => {
   const miner = miners.find(m => m.id === req.params.id);
   if (!miner) return res.status(404).json({ success: false });
